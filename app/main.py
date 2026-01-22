@@ -61,14 +61,16 @@ async def error_handler(update, context):
     logger.error(f"Update {update} caused error {context.error}")
 
 
-def main():
-    """Start the bot."""
-    # Initialize database
-    asyncio.run(init_db())
+async def post_init(application):
+    """Initialize database after application is created."""
+    await init_db()
     logger.info("Database initialized")
 
+
+def main():
+    """Start the bot."""
     # Create application
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    application = Application.builder().token(settings.telegram_bot_token).post_init(post_init).build()
 
     # =========================================================================
     # KYC Conversation Handler
