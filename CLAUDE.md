@@ -8,15 +8,20 @@
 
 ## Project Overview
 
-This is a Telegram bot project designed for selection-based interactions. The bot likely handles user selections, polls, or interactive menus through Telegram's API.
+This is a Telegram bot for USDT/EUR exchange through Iron API. The bot enables users to buy and sell USDT directly via Telegram, with fiat payments handled through SEPA bank transfers.
+
+### Core Principle
+
+**Minimal Local Storage**: Store ONLY `telegram_id ↔ iron_customer_id` mapping locally. Everything else (wallets, banks, transactions, KYC status) is queried from Iron API in real-time.
 
 ### Technology Stack
 
-Based on the project name and common Telegram bot architectures, expect:
-- **Language**: Likely Node.js/TypeScript or Python
-- **Bot Framework**: node-telegram-bot-api, telegraf, python-telegram-bot, or similar
-- **Database**: To be determined (commonly PostgreSQL, MongoDB, or SQLite)
-- **Deployment**: To be determined
+- **Language**: Python 3.11
+- **Bot Framework**: python-telegram-bot 20.7
+- **HTTP Client**: httpx (for Iron API)
+- **Database**: SQLAlchemy with async support (SQLite/PostgreSQL)
+- **Configuration**: pydantic-settings
+- **Deployment**: Docker & Docker Compose
 
 ---
 
@@ -24,23 +29,57 @@ Based on the project name and common Telegram bot architectures, expect:
 
 ```
 select-tg-bot/
-├── src/              # Source code
-│   ├── bot/          # Bot logic and handlers
-│   ├── commands/     # Command handlers
-│   ├── services/     # Business logic services
-│   ├── models/       # Data models
-│   └── utils/        # Utility functions
-├── config/           # Configuration files
-├── tests/            # Test files
-├── scripts/          # Build and deployment scripts
-├── docs/             # Documentation
-├── .env.example      # Environment variables template
-├── package.json      # Node.js dependencies (if applicable)
-├── requirements.txt  # Python dependencies (if applicable)
-└── README.md         # Project documentation
+├── app/
+│   ├── main.py              # Bot entry point, polling, handlers registration
+│   ├── config.py            # Pydantic Settings from .env
+│   ├── constants.py         # Enums: KYCStatus, TransactionStatus, WalletType, etc.
+│   ├── models/
+│   │   ├── database.py      # SQLAlchemy async Base
+│   │   └── user.py          # User(telegram_id, iron_customer_id) - SINGLE table
+│   ├── services/
+│   │   └── iron_api.py      # httpx client for Iron API operations
+│   └── bot/
+│       ├── handlers.py      # All command handlers and conversation flows
+│       └── states.py        # ConversationState enum and user data management
+├── data/                    # Database storage (gitignored)
+├── Dockerfile               # Python 3.11 container
+├── docker-compose.yml       # Docker orchestration
+├── requirements.txt         # Python dependencies
+├── .env.example             # Environment variables template
+├── .gitignore
+├── README.md                # User documentation
+└── CLAUDE.md                # This file - AI assistant guide
 ```
 
-**Note**: This structure will evolve as the project develops. Always verify actual structure before making assumptions.
+---
+
+## Iron API Integration
+
+This bot is tightly integrated with Iron API (https://docs.iron.xyz/reference-sandbox).
+
+### Key Endpoints
+
+**Base URL**: `https://api.sandbox.iron.xyz/api` (sandbox) or `https://api.iron.xyz/api` (production)
+
+- `POST /customer/onboard` - Onboard new customer with KYC
+- `POST /addresses/crypto/self-hosted` - Register user's external wallet
+- `POST /addresses/crypto/hosted` - Create Iron-managed wallet
+- `POST /addresses/fiat` - Register bank account (IBAN)
+- `GET /addresses/crypto?customer_id=` - List all crypto wallets
+- `GET /addresses/fiat?customer_id=` - List all bank accounts
+- `POST /quotes` - Get exchange rate quote
+- `POST /onramp/create` - Create buy order (EUR → USDT)
+- `POST /offramp/create` - Create sell order (USDT → EUR)
+- `GET /transactions?customer_id=` - Get transaction history
+- `GET /customer/{id}` - Get customer KYC status
+
+### Important Notes
+
+- All API calls are in `app/services/iron_api.py`
+- API key is passed in `Authorization: Bearer {key}` header
+- Always handle `IronAPIError` exceptions
+- Never cache wallet/bank/transaction data - always fetch fresh from API
+- Sandbox environment for testing, production for real transactions
 
 ---
 
@@ -93,6 +132,32 @@ refactor(services): extract selection logic to separate service
 
 ## Key Conventions for AI Assistants
 
+### Project-Specific Rules
+
+1. **Minimal Database Storage**:
+   - ONLY store `telegram_id ↔ iron_customer_id` in local database
+   - NEVER cache wallets, banks, or transactions locally
+   - Always fetch fresh data from Iron API
+   - This ensures data consistency and reduces storage
+
+2. **Iron API Integration**:
+   - All financial operations MUST go through Iron API
+   - Handle `IronAPIError` exceptions in all handlers
+   - Log API errors but don't expose details to users
+   - Use async/await for all API calls (httpx AsyncClient)
+
+3. **Conversation Flow Management**:
+   - Use `ConversationHandler` for multi-step flows
+   - Store temporary data in `conversation_data` dict (app/bot/states.py)
+   - Always clear user data with `clear_user_data()` after flow completion
+   - Handle cancellation gracefully
+
+4. **Security for Financial Bot**:
+   - Validate all numeric inputs (amounts, IBANs)
+   - Never log sensitive data (API keys, IBANs, wallet addresses)
+   - Use environment variables for ALL credentials
+   - Implement proper error messages without exposing internals
+
 ### General Guidelines
 
 1. **Read Before Writing**: Always read existing files before modifying them. Understand the current implementation before suggesting changes.
@@ -106,7 +171,7 @@ refactor(services): extract selection logic to separate service
    - Implement rate limiting for bot commands
    - Handle errors gracefully without exposing internal details
 
-4. **Testing**: Write tests for new features and bug fixes. Run existing tests before committing.
+4. **Testing**: Test all flows manually with Iron sandbox before production.
 
 5. **Documentation**: Update relevant documentation when making changes, but don't create documentation files unless explicitly requested.
 
@@ -142,76 +207,122 @@ Create `.env.example` with placeholder values, never commit actual `.env` files.
 
 ## Common Telegram Bot Patterns
 
-### Basic Bot Structure
+### Bot Structure (This Project)
 
-**Node.js/TypeScript Example**:
-```javascript
-// bot/index.ts
-import { Telegraf } from 'telegraf';
+This project uses python-telegram-bot 20.7 with async/await:
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
-
-// Middleware
-bot.use(async (ctx, next) => {
-  // Logging, auth, etc.
-  await next();
-});
-
-// Command handlers
-bot.command('start', (ctx) => ctx.reply('Welcome!'));
-
-// Callback query handlers
-bot.on('callback_query', handleCallbackQuery);
-
-bot.launch();
-```
-
-**Python Example**:
 ```python
-# bot/main.py
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-
-async def start(update, context):
-    await update.message.reply_text('Welcome!')
+# app/main.py - Entry point
+from telegram.ext import Application, ConversationHandler
 
 def main():
-    app = Application.builder().token(os.getenv('BOT_TOKEN')).build()
+    # Initialize database
+    asyncio.run(init_db())
 
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    # Create application
+    application = Application.builder().token(settings.telegram_bot_token).build()
 
-    app.run_polling()
+    # Add conversation handlers
+    application.add_handler(kyc_conversation)
+    application.add_handler(buy_conversation)
+
+    # Run polling
+    application.run_polling(allowed_updates=["message", "callback_query"])
 ```
 
-### Selection/Poll Patterns
+### Conversation Handler Pattern
 
-```javascript
-// Example: Creating an inline keyboard for selections
-const keyboard = {
-  inline_keyboard: [
-    [{ text: 'Option 1', callback_data: 'opt_1' }],
-    [{ text: 'Option 2', callback_data: 'opt_2' }],
-    [{ text: 'Option 3', callback_data: 'opt_3' }]
-  ]
-};
+All multi-step flows use ConversationHandler:
 
-await ctx.reply('Please select an option:', {
-  reply_markup: keyboard
-});
+```python
+conversation = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.Regex("^💰 Buy USDT$"), buy_start),
+    ],
+    states={
+        ConversationState.BUY_AMOUNT_INPUT: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, buy_amount_input),
+        ],
+        ConversationState.BUY_WALLET_SELECTION: [
+            CallbackQueryHandler(buy_wallet_selected, pattern=f"^{CallbackPrefix.WALLET_SELECT}"),
+        ],
+    },
+    fallbacks=[
+        CommandHandler("cancel", cancel_conversation),
+    ],
+)
+```
+
+### Main Menu Pattern
+
+This bot uses ReplyKeyboardMarkup for main menu:
+
+```python
+def get_main_menu_keyboard():
+    keyboard = [
+        ["💰 Buy USDT", "💸 Sell USDT"],
+        ["👤 Profile", "💼 Wallets & Banks"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+```
+
+### Inline Keyboard for Selections
+
+Used for wallet/bank selection, confirmations:
+
+```python
+keyboard = []
+for wallet in wallets:
+    address = wallet.get("address", "")
+    wallet_id = wallet.get("id", "")
+    button_text = f"{network.upper()} - {address[:6]}...{address[-4:]}"
+    keyboard.append([InlineKeyboardButton(button_text, callback_data=f"ws_{wallet_id}")])
+
+reply_markup = InlineKeyboardMarkup(keyboard)
+await update.message.reply_text("Choose wallet:", reply_markup=reply_markup)
 ```
 
 ### Callback Query Handling
 
-```javascript
-bot.on('callback_query', async (ctx) => {
-  const data = ctx.callbackQuery.data;
+Always answer callback queries to remove loading state:
 
-  // Handle selection
-  await handleSelection(ctx, data);
+```python
+async def wallet_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()  # Important: answer first!
 
-  // Answer callback query to remove loading state
-  await ctx.answerCbQuery();
-});
+    wallet_id = query.data.replace("ws_", "")
+    # Process selection...
+
+    await query.edit_message_text("Wallet selected!")
+```
+
+### Iron API Call Pattern
+
+All Iron API calls follow this pattern:
+
+```python
+async def some_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+    user = await get_user_by_telegram_id(telegram_id)
+
+    if not user:
+        await update.message.reply_text("Please use /start first")
+        return
+
+    try:
+        # Call Iron API
+        result = await iron_api.some_method(
+            customer_id=user.iron_customer_id,
+            param=value,
+        )
+
+        # Process result
+        await update.message.reply_text("Success!")
+
+    except IronAPIError as e:
+        logger.error(f"Iron API error: {e}")
+        await update.message.reply_text("Error occurred. Please try again.")
 ```
 
 ---
