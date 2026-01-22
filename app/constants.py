@@ -3,33 +3,38 @@ from enum import Enum
 
 
 class KYCStatus(str, Enum):
-    """KYC verification status."""
+    """KYC verification status (from Iron API)."""
+    NOT_STARTED = "not_started"
     PENDING = "pending"
+    UNDER_REVIEW = "under_review"
     APPROVED = "approved"
     REJECTED = "rejected"
-    NOT_STARTED = "not_started"
 
 
 class TransactionStatus(str, Enum):
-    """Transaction status."""
+    """Transaction status (from Iron API)."""
+    CREATED = "created"
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    EXPIRED = "expired"
 
 
 class WalletType(str, Enum):
-    """Crypto wallet type."""
-    SELF_HOSTED = "self_hosted"
-    HOSTED = "hosted"
+    """Crypto wallet type (from Iron API)."""
+    SELF_HOSTED = "SelfHosted"
+    HOSTED = "Hosted"
 
 
 class CryptoNetwork(str, Enum):
-    """Supported crypto networks."""
-    ETHEREUM = "ethereum"
-    POLYGON = "polygon"
-    TRON = "tron"
+    """Supported crypto networks (from Iron API - must match exactly with capital letter)."""
+    ETHEREUM = "Ethereum"
+    POLYGON = "Polygon"
+    SOLANA = "Solana"
+    ARBITRUM = "Arbitrum"
+    BASE = "Base"
+    STELLAR = "Stellar"
 
 
 class Currency(str, Enum):

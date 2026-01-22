@@ -61,8 +61,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if user:
         # User exists, check KYC status
         try:
-            customer_data = await iron_api.get_customer_kyc_status(user.iron_customer_id)
-            kyc_status = customer_data.get("kycStatus", "not_started")
+            customer_data = await iron_api.get_customer(user.iron_customer_id)
+            kyc_status = customer_data.get("kyc_status", "not_started")
 
             if kyc_status == KYCStatus.APPROVED:
                 await update.message.reply_text(
@@ -141,13 +141,13 @@ async def kyc_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     try:
         # Onboard customer to Iron
         result = await iron_api.onboard_customer(
-            telegram_id=telegram_id,
             email=user_data["email"],
             first_name=user_data["first_name"],
             last_name=user_data["last_name"],
+            metadata={"telegram_id": str(telegram_id)},
         )
 
-        iron_customer_id = result.get("customerId")
+        iron_customer_id = result.get("id")
         if not iron_customer_id:
             raise IronAPIError("No customer ID returned from Iron API")
 
@@ -189,13 +189,13 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        customer_data = await iron_api.get_customer_kyc_status(user.iron_customer_id)
+        customer_data = await iron_api.get_customer(user.iron_customer_id)
         transactions = await iron_api.get_transactions(user.iron_customer_id, limit=5)
 
         profile_text = (
             f"👤 Profile\n\n"
             f"Customer ID: {user.iron_customer_id[:8]}...\n"
-            f"KYC Status: {customer_data.get('kycStatus', 'N/A')}\n"
+            f"KYC Status: {customer_data.get('kyc_status', 'N/A')}\n"
             f"Recent Transactions: {len(transactions)}\n"
         )
 
@@ -352,30 +352,14 @@ async def create_hosted_wallet_finish(update: Update, context: ContextTypes.DEFA
 
     query = update.callback_query
 
-    try:
-        network = CryptoNetwork(user_data["wallet_network"])
-        result = await iron_api.create_hosted_wallet(
-            customer_id=user.iron_customer_id,
-            network=network,
-        )
-
-        wallet_address = result.get("address", "N/A")
-        clear_user_data(telegram_id)
-
-        await query.edit_message_text(
-            f"✅ Hosted wallet created!\n\n"
-            f"Network: {network.value.upper()}\n"
-            f"Address: {wallet_address}"
-        )
-        return ConversationHandler.END
-
-    except IronAPIError as e:
-        logger.error(f"Error creating hosted wallet: {e}")
-        await query.edit_message_text(
-            "❌ Error creating wallet. Please try again."
-        )
-        clear_user_data(telegram_id)
-        return ConversationHandler.END
+    # Hosted wallets require exchange integration (vasp_did + wallet_address)
+    clear_user_data(telegram_id)
+    await query.edit_message_text(
+        "❌ Hosted wallets are not yet supported.\n\n"
+        "Hosted wallets require exchange integration with VASP credentials.\n\n"
+        "Please use 'Self-Hosted' option to add your own wallet address."
+    )
+    return ConversationHandler.END
 
 
 async def add_bank_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -410,9 +394,20 @@ async def bank_iban_input(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text("Adding bank account... ⏳")
 
     try:
+        # Get customer data for account holder name
+        customer_data = await iron_api.get_customer(user.iron_customer_id)
+        first_name = customer_data.get("first_name", "")
+        last_name = customer_data.get("last_name", "")
+        account_holder_name = f"{first_name} {last_name}".strip()
+
+        # Extract country code from IBAN (first 2 letters)
+        country_code = iban[:2]
+
         result = await iron_api.register_bank_account(
             customer_id=user.iron_customer_id,
+            account_holder_name=account_holder_name,
             iban=iban,
+            country_code=country_code,
         )
 
         await update.message.reply_text(
@@ -454,8 +449,8 @@ async def view_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         wallet_text = "💳 Your Crypto Wallets:\n\n"
         for idx, wallet in enumerate(wallets, 1):
-            address = wallet.get("address", "N/A")
-            network = wallet.get("network", "N/A")
+            address = wallet.get("wallet_address", "N/A")
+            network = wallet.get("blockchain", "N/A")
             wallet_type = wallet.get("type", "N/A")
             wallet_text += f"{idx}. {network.upper()} ({wallet_type})\n"
             wallet_text += f"   {address[:10]}...{address[-8:]}\n\n"
@@ -492,8 +487,10 @@ async def view_banks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bank_text = "🏦 Your Bank Accounts:\n\n"
         for idx, bank in enumerate(banks, 1):
             iban = bank.get("iban", "N/A")
+            account_holder_name = bank.get("account_holder_name", "N/A")
             label = bank.get("label", "EUR Account")
             bank_text += f"{idx}. {label}\n"
+            bank_text += f"   {account_holder_name}\n"
             bank_text += f"   {iban[:4]}...{iban[-4:]}\n\n"
 
         await query.edit_message_text(bank_text)
@@ -533,20 +530,26 @@ async def buy_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     telegram_id = update.effective_user.id
     user_data = get_user_data(telegram_id)
     user_data["buy_amount"] = amount
+    user = await get_user_by_telegram_id(telegram_id)
+
+    if not user:
+        await update.message.reply_text("Error: User not found. Please use /start")
+        return ConversationHandler.END
 
     await update.message.reply_text("Getting quote... ⏳")
 
     try:
         quote = await iron_api.get_quote(
+            customer_id=user.iron_customer_id,
             source_currency="EUR",
-            destination_currency="USDT",
-            amount=amount,
+            target_currency="USDT",
+            source_amount=amount,
         )
 
-        user_data["quote_id"] = quote.get("quoteId")
-        user_data["usdt_amount"] = quote.get("destinationAmount")
-        user_data["rate"] = quote.get("rate")
-        user_data["fee"] = quote.get("fee", 0)
+        user_data["quote_id"] = quote.get("quote_id")
+        user_data["usdt_amount"] = quote.get("target_amount")
+        user_data["rate"] = quote.get("exchange_rate")
+        user_data["fee"] = quote.get("fee_amount", 0)
 
         await update.message.reply_text(
             f"💱 Quote:\n\n"
@@ -587,8 +590,8 @@ async def show_wallet_selection_for_buy(update: Update, context: ContextTypes.DE
 
         keyboard = []
         for wallet in wallets:
-            address = wallet.get("address", "")
-            network = wallet.get("network", "")
+            address = wallet.get("wallet_address", "")
+            network = wallet.get("blockchain", "")
             wallet_id = wallet.get("id", "")
             button_text = f"{network.upper()} - {address[:6]}...{address[-4:]}"
             keyboard.append([InlineKeyboardButton(button_text, callback_data=f"{CallbackPrefix.WALLET_SELECT}{wallet_id}")])
@@ -672,15 +675,16 @@ async def buy_bank_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         order = await iron_api.create_onramp_order(
             customer_id=user.iron_customer_id,
             quote_id=user_data["quote_id"],
-            source_account_id=bank_id,
-            destination_address_id=user_data["destination_wallet_id"],
+            crypto_address_id=user_data["destination_wallet_id"],
+            fiat_address_id=bank_id,
         )
 
-        order_id = order.get("orderId")
-        payment_details = order.get("paymentDetails", {})
-        recipient_iban = payment_details.get("iban", "N/A")
-        reference = payment_details.get("reference", "N/A")
-        amount = user_data["buy_amount"]
+        order_id = order.get("order_id")
+        payment_reference = order.get("payment_reference", "N/A")
+        payment_iban = order.get("payment_iban", "N/A")
+        payment_bic = order.get("payment_bic", "N/A")
+        amount_eur = order.get("amount_eur", user_data["buy_amount"])
+        amount_usdt = order.get("amount_usdt", user_data["usdt_amount"])
 
         clear_user_data(telegram_id)
 
@@ -688,10 +692,12 @@ async def buy_bank_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"✅ Order created!\n\n"
             f"Order ID: {order_id}\n\n"
             f"📤 Payment Instructions:\n"
-            f"Amount: {amount} EUR\n"
-            f"IBAN: {recipient_iban}\n"
-            f"Reference: {reference}\n\n"
+            f"Amount: {amount_eur} EUR\n"
+            f"IBAN: {payment_iban}\n"
+            f"BIC: {payment_bic}\n"
+            f"Reference: {payment_reference}\n\n"
             f"⚠️ Important: Include the reference in your transfer!\n\n"
+            f"You will receive: {amount_usdt} USDT\n\n"
             f"Once we receive your payment, USDT will be sent to your wallet.",
         )
         return ConversationHandler.END
@@ -733,20 +739,26 @@ async def sell_amount_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     telegram_id = update.effective_user.id
     user_data = get_user_data(telegram_id)
     user_data["sell_amount"] = amount
+    user = await get_user_by_telegram_id(telegram_id)
+
+    if not user:
+        await update.message.reply_text("Error: User not found. Please use /start")
+        return ConversationHandler.END
 
     await update.message.reply_text("Getting quote... ⏳")
 
     try:
         quote = await iron_api.get_quote(
+            customer_id=user.iron_customer_id,
             source_currency="USDT",
-            destination_currency="EUR",
-            amount=amount,
+            target_currency="EUR",
+            source_amount=amount,
         )
 
-        user_data["quote_id"] = quote.get("quoteId")
-        user_data["eur_amount"] = quote.get("destinationAmount")
-        user_data["rate"] = quote.get("rate")
-        user_data["fee"] = quote.get("fee", 0)
+        user_data["quote_id"] = quote.get("quote_id")
+        user_data["eur_amount"] = quote.get("target_amount")
+        user_data["rate"] = quote.get("exchange_rate")
+        user_data["fee"] = quote.get("fee_amount", 0)
 
         await update.message.reply_text(
             f"💱 Quote:\n\n"
@@ -787,8 +799,8 @@ async def show_wallet_selection_for_sell(update: Update, context: ContextTypes.D
 
         keyboard = []
         for wallet in wallets:
-            address = wallet.get("address", "")
-            network = wallet.get("network", "")
+            address = wallet.get("wallet_address", "")
+            network = wallet.get("blockchain", "")
             wallet_id = wallet.get("id", "")
             button_text = f"{network.upper()} - {address[:6]}...{address[-4:]}"
             keyboard.append([InlineKeyboardButton(button_text, callback_data=f"{CallbackPrefix.WALLET_SELECT}{wallet_id}")])
@@ -872,15 +884,15 @@ async def sell_bank_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         order = await iron_api.create_offramp_order(
             customer_id=user.iron_customer_id,
             quote_id=user_data["quote_id"],
-            source_address_id=user_data["source_wallet_id"],
-            destination_account_id=bank_id,
+            crypto_address_id=user_data["source_wallet_id"],
+            fiat_address_id=bank_id,
         )
 
-        order_id = order.get("orderId")
-        deposit_details = order.get("depositDetails", {})
-        deposit_address = deposit_details.get("address", "N/A")
-        network = deposit_details.get("network", "N/A")
-        amount = user_data["sell_amount"]
+        order_id = order.get("order_id")
+        deposit_address = order.get("deposit_address", "N/A")
+        deposit_network = order.get("deposit_network", "N/A")
+        amount_usdt = order.get("amount_usdt", user_data["sell_amount"])
+        amount_eur = order.get("amount_eur", user_data["eur_amount"])
 
         clear_user_data(telegram_id)
 
@@ -888,10 +900,11 @@ async def sell_bank_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"✅ Order created!\n\n"
             f"Order ID: {order_id}\n\n"
             f"📤 Deposit Instructions:\n"
-            f"Amount: {amount} USDT\n"
-            f"Network: {network.upper()}\n"
+            f"Amount: {amount_usdt} USDT\n"
+            f"Network: {deposit_network.upper()}\n"
             f"Address: {deposit_address}\n\n"
-            f"⚠️ Important: Send exactly {amount} USDT to the address above!\n\n"
+            f"⚠️ Important: Send exactly {amount_usdt} USDT to the address above!\n\n"
+            f"You will receive: {amount_eur} EUR\n\n"
             f"Once we receive your USDT, EUR will be sent to your bank account.",
         )
         return ConversationHandler.END
