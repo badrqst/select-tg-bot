@@ -23,7 +23,7 @@ class IronAPIService:
         self.base_url = settings.iron_api_base_url
         self.api_key = settings.iron_api_key
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "X-API-Key": self.api_key,
             "Content-Type": "application/json",
         }
 
