@@ -1,5 +1,6 @@
 """Iron API service for crypto/fiat operations."""
 import logging
+import uuid
 from typing import Any, Optional
 
 import httpx
@@ -36,12 +37,19 @@ class IronAPIService:
         """Make HTTP request to Iron API."""
         url = f"{self.base_url}{endpoint}"
 
+        # Prepare headers
+        headers = self.headers.copy()
+
+        # Add Idempotency-Key for POST/PUT/PATCH requests
+        if method.upper() in ["POST", "PUT", "PATCH"]:
+            headers["Idempotency-Key"] = str(uuid.uuid4())
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.request(
                     method=method,
                     url=url,
-                    headers=self.headers,
+                    headers=headers,
                     json=data,
                     params=params,
                 )
