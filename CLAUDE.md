@@ -61,25 +61,55 @@ This bot is tightly integrated with Iron API (https://docs.iron.xyz/reference-sa
 
 **Base URL**: `https://api.sandbox.iron.xyz/api` (sandbox) or `https://api.iron.xyz/api` (production)
 
+#### Customer Management
 - `POST /customer/onboard` - Onboard new customer with KYC
-- `POST /addresses/crypto/self-hosted` - Register user's external wallet
-- `POST /addresses/crypto/hosted` - Create Iron-managed wallet
-- `POST /addresses/fiat` - Register bank account (IBAN)
+  - Body: `{email, first_name, last_name, metadata?}`
+  - Returns: `{id, email, kyc_status, kyc_url, created_at}`
+- `GET /customer/{customerId}` - Get customer details and KYC status
+
+#### Wallet Management
+- `POST /addresses/crypto/self-hosted` - Register user's self-hosted wallet
+  - Body: `{customer_id, blockchain, wallet_address, proof_message?, proof_signature?}`
+  - Blockchain: "Ethereum", "Polygon", "Solana", "Arbitrum", "Base", "Stellar"
+- `POST /addresses/crypto/hosted` - Register hosted wallet (exchange wallet)
+  - Body: `{customer_id, blockchain, wallet_address, vasp_did}`
+  - Requires VASP DID from `/addresses/search-vasps`
 - `GET /addresses/crypto?customer_id=` - List all crypto wallets
+  - Returns: `{addresses: [{id, address_type, blockchain, wallet_address, disabled}]}`
+- `GET /addresses/search-vasps?query=` - Search for exchange VASP DIDs
+
+#### Bank Account Management
+- `POST /addresses/fiat` - Register bank account (IBAN)
+  - Body: `{customer_id, account_holder_name, iban, country_code, bic?}`
+  - Returns: `{id, iban, account_holder_name, status, created_at}`
 - `GET /addresses/fiat?customer_id=` - List all bank accounts
+- `DELETE /addresses/fiat/{addressId}` - Delete bank account
+
+#### Trading Operations
 - `POST /quotes` - Get exchange rate quote
+  - Body: `{customer_id, source_currency, target_currency, source_amount? OR target_amount?}`
+  - Returns: `{quote_id, source_amount, target_amount, exchange_rate, fee_amount, expires_at}`
 - `POST /onramp/create` - Create buy order (EUR → USDT)
+  - Body: `{customer_id, quote_id, crypto_address_id, fiat_address_id}`
+  - Returns: `{order_id, transaction_id, payment_reference, payment_iban, amount_eur, amount_usdt}`
 - `POST /offramp/create` - Create sell order (USDT → EUR)
-- `GET /transactions?customer_id=` - Get transaction history
-- `GET /customer/{id}` - Get customer KYC status
+  - Body: `{customer_id, quote_id, crypto_address_id, fiat_address_id}`
+  - Returns: `{order_id, transaction_id, deposit_address, deposit_network, amount_usdt, amount_eur}`
 
-### Important Notes
+#### Transaction History
+- `GET /transactions/{transactionId}` - Get specific transaction
+- `GET /transactions?customer_id=&limit=&offset=` - Get customer transactions
+  - Returns: `{transactions: [{transaction_id, order_id, type, status, source_amount, target_amount}]}`
 
-- All API calls are in `app/services/iron_api.py`
-- API key is passed in `Authorization: Bearer {key}` header
-- Always handle `IronAPIError` exceptions
-- Never cache wallet/bank/transaction data - always fetch fresh from API
-- Sandbox environment for testing, production for real transactions
+### Important API Notes
+
+- **Authentication**: API key is passed in `X-API-Key` header (NOT Authorization Bearer)
+- **Idempotency**: All POST/PUT/PATCH requests require `IDEMPOTENCY-KEY` header (UUID)
+- **Field naming**: All request and response fields use snake_case (first_name, wallet_address, etc.)
+- **Blockchain names**: Must use capital first letter ("Ethereum", "Polygon", not "ethereum")
+- **Error handling**: Always handle `IronAPIError` exceptions
+- **Data freshness**: Never cache wallet/bank/transaction data - always fetch fresh from API
+- **Environments**: Sandbox for testing, production for real transactions
 
 ---
 
