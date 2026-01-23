@@ -110,29 +110,16 @@ async def kyc_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_data["email"] = email
 
     await update.message.reply_text(
-        "Great! Now please provide your first name:"
+        "Great! Now please provide your full name:"
     )
     return ConversationState.KYC_FIRST_NAME
 
 
-async def kyc_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle first name input for KYC."""
-    first_name = update.message.text.strip()
-    user_data = get_user_data(update.effective_user.id)
-    user_data["first_name"] = first_name
-
-    await update.message.reply_text(
-        "And your last name:"
-    )
-    return ConversationState.KYC_LAST_NAME
-
-
-async def kyc_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle last name input and complete KYC onboarding."""
-    last_name = update.message.text.strip()
+async def kyc_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle name input and complete KYC onboarding."""
+    name = update.message.text.strip()
     telegram_id = update.effective_user.id
     user_data = get_user_data(telegram_id)
-    user_data["last_name"] = last_name
 
     await update.message.reply_text(
         "Creating your account... ⏳"
@@ -142,9 +129,7 @@ async def kyc_last_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         # Onboard customer to Iron
         result = await iron_api.onboard_customer(
             email=user_data["email"],
-            first_name=user_data["first_name"],
-            last_name=user_data["last_name"],
-            metadata={"telegram_id": str(telegram_id)},
+            name=name,
         )
 
         iron_customer_id = result.get("id")

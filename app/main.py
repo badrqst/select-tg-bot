@@ -17,8 +17,7 @@ from app.bot.handlers import (
     # Start & KYC
     start_command,
     kyc_email,
-    kyc_first_name,
-    kyc_last_name,
+    kyc_name,
     # Profile
     profile_command,
     # Wallets & Banks
@@ -82,10 +81,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, kyc_email),
             ],
             ConversationState.KYC_FIRST_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, kyc_first_name),
-            ],
-            ConversationState.KYC_LAST_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, kyc_last_name),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, kyc_name),
             ],
         },
         fallbacks=[

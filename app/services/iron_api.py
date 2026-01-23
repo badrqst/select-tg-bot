@@ -71,31 +71,23 @@ class IronAPIService:
     async def onboard_customer(
         self,
         email: str,
-        first_name: str,
-        last_name: str,
-        metadata: Optional[dict] = None,
+        name: str,
     ) -> dict[str, Any]:
         """
         Onboard a new customer to Iron.
 
         Args:
             email: Customer email
-            first_name: Customer first name
-            last_name: Customer last name
-            metadata: Optional metadata dictionary
+            name: Customer full name
 
         Returns:
             Customer data with 'id' field (UUID)
         """
         data = {
+            "customer_type": "Person",
             "email": email,
-            "first_name": first_name,
-            "last_name": last_name,
-            "customer_type": "Person",  # Required by Iron API
+            "name": name,
         }
-
-        if metadata:
-            data["metadata"] = metadata
 
         result = await self._request("POST", "/customers", data=data)
         logger.info(f"Customer created: {result.get('id')}")

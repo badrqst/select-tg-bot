@@ -7,7 +7,6 @@ class ConversationState(IntEnum):
     # KYC flow
     KYC_EMAIL = 1
     KYC_FIRST_NAME = 2
-    KYC_LAST_NAME = 3
 
     # Wallet management
     WALLET_TYPE_SELECTION = 10
