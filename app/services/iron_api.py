@@ -96,8 +96,8 @@ class IronAPIService:
         if metadata:
             data["metadata"] = metadata
 
-        result = await self._request("POST", "/customer/onboard", data=data)
-        logger.info(f"Customer onboarded: {result.get('id')}")
+        result = await self._request("POST", "/customers", data=data)
+        logger.info(f"Customer created: {result.get('id')}")
         return result
 
     async def get_customer(self, customer_id: str) -> dict[str, Any]:
