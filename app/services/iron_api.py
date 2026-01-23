@@ -100,7 +100,7 @@ class IronAPIService:
         Returns:
             Customer data with fields: id, email, kyc_status, kyc_url, created_at
         """
-        result = await self._request("GET", f"/customer/{customer_id}")
+        result = await self._request("GET", f"/customers/{customer_id}")
         return result
 
     # =========================================================================
@@ -200,8 +200,8 @@ class IronAPIService:
             - disabled
             - created_at
         """
-        params = {"customer_id": customer_id}
-        result = await self._request("GET", "/addresses/crypto", params=params)
+        params = {"filter": "All"}
+        result = await self._request("GET", f"/addresses/crypto/{customer_id}", params=params)
         return result.get("addresses", [])
 
     async def update_wallet_status(self, address_id: str, disabled: bool) -> dict[str, Any]:
@@ -261,8 +261,8 @@ class IronAPIService:
             - status (pending/verified/failed)
             - created_at
         """
-        params = {"customer_id": customer_id}
-        result = await self._request("GET", "/addresses/fiat", params=params)
+        params = {"page_size": 10}
+        result = await self._request("GET", f"/addresses/fiat/{customer_id}", params=params)
         return result.get("accounts", [])
 
     async def get_bank_account(self, address_id: str) -> dict[str, Any]:
